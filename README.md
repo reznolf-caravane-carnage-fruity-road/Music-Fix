@@ -1,10 +1,12 @@
-# CCFR Music Startup
+# Music Fix
 
-A small BepInEx 5 plugin for **Caravan Carnage: Fruity Road** that fixes the
-"no music after launch until you toggle Music off/on in Settings" bug.
+A small BepInEx 5 plugin for **Caravan Carnage: Fruity Road**. It keeps music
+playing when the base game would leave it silent, and fades in a song when the
+main menu appears.
 
-- Plugin ID: `com.reznolf.ccfr.musicstartup`
-- DLL: `CCFR.MusicStartup.dll`
+- Plugin ID: `com.reznolf.ccfr.musicfix`
+- DLL: `CCFR.MusicFix.dll`
+- Version: `0.3.0`
 - Target: .NET Standard 2.1 / BepInEx 5.4.23.6 / Unity 6000.3.8f1 (Mono)
 
 ## Requirements
@@ -15,29 +17,33 @@ A small BepInEx 5 plugin for **Caravan Carnage: Fruity Road** that fixes the
 ## Download
 
 Grab the latest release:
-[Music-Startup-Fix releases](https://github.com/reznolf-caravane-carnage-fruity-road/Music-Startup-Fix/releases/latest)
+[Music-Fix releases](https://github.com/reznolf-caravane-carnage-fruity-road/Music-Fix/releases/latest)
 
-The zip contains `BepInEx/plugins/CCFR.MusicStartup.dll`; extract it into the
-game folder.
+The zip contains `BepInEx/plugins/CCFR.MusicFix.dll`; extract it into the game
+folder.
 
 ## Installation
 
 1. Install BepInEx 5 x64 into the game folder and run the game once.
-2. Copy `CCFR.MusicStartup.dll` into `<game>\BepInEx\plugins\`.
+2. Copy `CCFR.MusicFix.dll` into `<game>\BepInEx\plugins\`.
 3. Start the game. Music fades in when the main menu appears.
 
 ---
 
-## Symptom
+## Symptoms
 
-After the game is launched (especially when it starts unfocused/in the
-background), music is silent. Opening Settings and toggling **Music** off and
-back on makes it start.
+1. **No music after launch** (especially when the game starts unfocused/in the
+   background). Toggling Music off/on in Settings makes it start.
+2. **Music fades out and stays silent** after a long session, usually when
+   entering the shop after several runs. Toggling Music off/on restarts it.
+3. **Music stays very quiet after closing the shop** (`EnterShop()` lowers it to
+   5% and the normal close path never restores it).
 
-## Root cause (verified in-game)
+## Root causes (verified in-game)
 
-The game's music is driven by `MusicController.musicAudioSource_1` (the
-`audio_1` child of `MUSIC_CONTROLLER`). `MusicController.Start_MUSIC()` does:
+### 1. Audio-device reconfiguration stops the source
+
+`MusicController.Start_MUSIC()` plays the source once and never checks it again:
 
 ```csharp
 musicAudioSource_1.Play();
@@ -45,95 +51,101 @@ musicAudioSource_1.volume = 0f;
 setVolumeMaxRoutine = StartCoroutine(SetToMaxVolume(musicAudioSource_1, 60f));
 ```
 
-and never checks the source again.
+When Unity reinitialises its audio device (starting unfocused and gaining focus
+later, or changing the default output device), every `AudioSource` stops. The
+clip, loop flag and volume survive, but `isPlaying` becomes `false` and `time`
+resets to `0`.
 
-When Unity reinitialises its audio device - which happens when a game that was
-started unfocused gains focus, or when the default output device changes -
-every `AudioSource` is stopped. The source keeps its clip, loop flag and volume,
-but `isPlaying` becomes `false`, `time` resets to `0`, and it stays stopped.
+The controller still reports `whichSongDecidedToPlay != -1`,
+`currentlySongIsPlaying = true`, `fadingOutMusic = false`, so the game believes
+music is playing. Nothing handles `AudioSettings.OnAudioConfigurationChanged`.
+The only path that calls `Play()` again is `knop.Clicked_On_Off_Music` →
+`ResetMusic()` + `Nachat_New_Run()` - the Settings toggle.
 
-`MusicController` cannot notice:
+### 2. The "change music after 4 game-overs" fade leaves nothing playing
 
-- `whichSongDecidedToPlay` is still the selected song.
-- `currentlySongIsPlaying` is still `true`.
-- `fadingOutMusic` is `false`.
-- `musicAudioSource_1.clip` is still assigned and `volume` is still correct.
+`DoBill` → `Check_If_Saw_GameoverScreen_Many_Times` is intentional game logic:
 
-Nothing in the game handles `AudioSettings.OnAudioConfigurationChanged`, so no
-code calls `Play()` again. The only path that does is `knop.Clicked_On_Off_Music`
-→ `ResetMusic()` + `Nachat_New_Run()`, which is why the Settings toggle is the
-only workaround.
-
-### Reproduction used for testing
-
-`AudioSettings.Reset()` was invoked while a song was playing (this is the same
-engine path used for an audio-device reconfiguration):
-
-Before the fix:
-
-```
-[diag] resetting audio: clip='music_3_loop' playing=True time=6.741 vol=0.600
-[diag] AudioSettings.Reset returned True
-[diag t=17.0] clip='music_3_loop' playing=False time=0.000 vol=0.600   <-- silent forever
+```csharp
+FadeOutMusicSong();                              // 15 s fade to zero
+fadedOutMusicCuzSawGameoverManyTimes = true;
 ```
 
-After the fix:
+`VolumeWaiter` then clears the song:
 
-```
-[diag] resetting audio: clip='music_4_loop' playing=True time=6.741 vol=0.600
-[recovery] audio configuration changed (deviceWasChanged=False)
-[recovery] restarted music (watchdog); song=4 clip='music_4_loop' volume=0.600 loop=True
-[diag t=17.1] clip='music_4_loop' playing=True time=0.341 vol=0.600   <-- recovered
+```csharp
+musicAudioSource_1.volume = 0f;
+whichSongDecidedToPlay = -1;
+currentlySongIsPlaying = false;
 ```
 
-Normal (no reset) runs produce no recovery log entries, i.e. the watchdog does
-not interfere with regular playback.
+Nothing starts a new song until the **next run** begins, so the menu/shop stays
+silent forever. The fade often finishes while the player is in the shop, which
+makes it look like the shop caused it.
+
+**Looping is not the cause.** A loop clip was tested by seeking to
+`length - 0.8 s`: `music_1_loop` (114.426 s) wrapped from `time=114.117` back to
+`time=0.203` and kept playing with `loop=True`. A source that stopped at the end
+of a clip with a song still selected would also be restarted by the recovery
+watchdog.
+
+### 3. Shop ducking is never undone
+
+`Shop.Open_Shop_Init()` calls `MusicController.EnterShop()`, which sets
+`current_max_volume = 0.05f` and slowly fades the music down. `knop.Close_Shop()`
+only hides the shop UI - it never calls `Set_Music_To_Average_Volume()`, so the
+music stays at 5% after leaving the shop.
 
 ## What the plugin does
 
 ### Menu music with fade-in
 
-- When the save, the main menu (`knop.start_menu`) and the music controller are
-  ready, and the player has finished the tutorial and has Music enabled, the
-  plugin calls `MusicController.Nachat_New_Run(-1, false)` once - exactly what
-  the Settings toggle does when switching Music back on.
-- Instead of the game's near-instant `SetToMaxVolume` ramp, the source starts at
-  volume 0 and the plugin ramps `current_max_volume` with a smoothstep over
-  `FadeInSeconds` (default **2.5 s**). The game's own volume coroutine follows
-  that ramp, so every later volume change (shop, game over, ...) still works.
-- Tutorial music is never touched. If Music is off in the game settings, nothing
-  is started.
+- When the save, the main menu and the music controller are ready, the player
+  has finished the tutorial, and Music is enabled, the plugin calls
+  `MusicController.Nachat_New_Run(-1, false)` once - exactly what the Settings
+  toggle does.
+- The source starts at volume 0 and `current_max_volume` is ramped with a
+  smoothstep over `FadeInSeconds` (default **2.5 s**). The game's own volume
+  coroutine follows that ramp, so later volume changes still work.
 
-Config file: `BepInEx\config\com.reznolf.ccfr.musicstartup.cfg`
+### Recovery watchdog
+
+- Checks every 0.5 s. If music is enabled, a song is selected, a clip is
+  assigned, `isPlaying == false`, and there is no intentional fade-out, it calls
+  `Play()` again, restores the volume target if needed, re-enables
+  `MusicIntroChecker` for `*_intro` clips, and sets `currentlySongIsPlaying`.
+- Reacts to `AudioSettings.OnAudioConfigurationChanged`, application focus and
+  resume events.
+- Verifies `Start_MUSIC`, `Nachat_New_Run` and `PlayMainMusic` shortly after they
+  run, covering a device reset during song loading.
+
+### Game-over fade recovery
+
+When the game's own game-over fade finishes (`fadedOutMusicCuzSawGameoverManyTimes`
+is set, the song is cleared, and the fade is no longer running), the plugin
+starts a **new random song** with the same fade-in instead of leaving silence.
+This preserves the game's "change music" intent. It does not race the separate
+level-unlock transition.
+
+### Shop volume restore
+
+A postfix on `knop.Close_Shop()` restores the normal music target with
+`Set_Music_To_Average_Volume()` after the shop closes.
+
+### Other
+
+- `Application.runInBackground` is forced on at plugin load (the game does this
+  later in `glov.LateStart`, but earlier is safer).
+- If Music is off in Settings, the plugin does nothing.
+
+## Configuration
+
+`BepInEx\config\com.reznolf.ccfr.musicfix.cfg`
 
 | Key | Default | Meaning |
 |---|---|---|
 | `Menu Music / StartMusicInMenu` | `true` | Start one song when the main menu is ready |
 | `Menu Music / FadeInSeconds` | `2.5` | Fade-in duration (0-10 s) |
-
-### Recovery watchdog
-
-- `MusicRecovery` runs a 0.5 s watchdog. If **all** of these are true:
-  - music is enabled (`glov.musicIs_On_1_Off_0 == 1`),
-  - the controller and `audio_1` are active/enabled,
-  - a song is selected (`whichSongDecidedToPlay != -1`),
-  - the source has a clip but `isPlaying == false`,
-  - there is no intentional fade-out,
-
-  it calls `Play()` again, restores `current_max_volume` if the source volume
-  was zeroed, re-enables `MusicIntroChecker` when the restored clip is an
-  `*_intro`, and sets `currentlySongIsPlaying = true`.
-
-- `AudioSettings.OnAudioConfigurationChanged` and focus/resume events trigger an
-  immediate (delayed by 0.5 s) recovery attempt, then a verification attempt.
-- `MusicController.Start_MUSIC`, `MusicController.Nachat_New_Run` and
-  `MusicIntroChecker.PlayMainMusic` are verified shortly after they run, so a
-  device reset in the middle of loading a song is also recovered.
-- `Application.runInBackground` is forced on at plugin load (the game already
-  does this later in `glov.LateStart`, but earlier is safer).
-
-The watchdog deliberately does **not** start music when no song is selected
-(`whichSongDecidedToPlay == -1`), so menus and game-over states are unchanged.
 
 ## Build and deploy
 
@@ -145,14 +157,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\deploy.ps1
 ```
 
 `scripts\deploy.ps1` defaults to
-`D:\SteamLibrary\steamapps\steamapps\common\CCFR`; pass `-GameDir "C:\path\to\game"`
-if your install is elsewhere.
+`D:\SteamLibrary\steamapps\steamapps\common\CCFR`; pass
+`-GameDir "C:\path\to\game"` if your install is elsewhere.
 
 Or directly:
 
 ```powershell
-dotnet build MusicStartup\MusicStartup.csproj -c Release -p:GameDir="C:\path\to\game"
-Copy-Item MusicStartup\bin\Release\CCFR.MusicStartup.dll `
+dotnet build MusicFix\MusicFix.csproj -c Release -p:GameDir="C:\path\to\game"
+Copy-Item MusicFix\bin\Release\CCFR.MusicFix.dll `
     "<game>\BepInEx\plugins\" -Force
 ```
 
@@ -169,41 +181,47 @@ Everything below is inert unless the environment variable is set.
 | `CCFR_MUSICDIAG_QUIT=1` | Quit the game when the heartbeat finishes |
 | `CCFR_MUSICDIAG_FORCE_PLAY_AT=8` | Call `Nachat_New_Run(-1, false)` at t=8 s |
 | `CCFR_MUSICDIAG_RESET_AUDIO_AT=15` | Call `AudioSettings.Reset()` at t=15 s (simulates a device change) |
+| `CCFR_MUSICDIAG_FADE_OUT_AT=8` | Call `FadeOutMusicSong()` at t=8 s (simulates the game-over fade) |
+| `CCFR_MUSICDIAG_SEEK_END_AT=9` | Seek the current loop clip near its end (loop test) |
+| `CCFR_MUSICDIAG_SHOP_TEST_AT=9` | Simulate the shop-close volume restore |
+| `CCFR_MUSICDIAG_NO_RECOVERY=1` | Disable the recovery watchdog (for isolated tests) |
 
 Example:
 
 ```powershell
-$env:CCFR_MUSICDIAG_SECONDS="24"
+$env:CCFR_MUSICDIAG_SECONDS="34"
 $env:CCFR_MUSICDIAG_QUIT="1"
-$env:CCFR_MUSICDIAG_FORCE_PLAY_AT="8"
-$env:CCFR_MUSICDIAG_RESET_AUDIO_AT="15"
+$env:CCFR_MUSICDIAG_FADE_OUT_AT="8"
 & "D:\SteamLibrary\steamapps\steamapps\common\CCFR\Caravan Carnage Fruity Road.exe"
 ```
 
-Then check `D:\SteamLibrary\steamapps\steamapps\common\CCFR\BepInEx\LogOutput.log`
-for `[recovery] restarted music`.
+Check `BepInEx\LogOutput.log` for:
+
+- `[recovery] restarted music`
+- `[recovery] game-over music fade finished`
+- `[recovery] shop closed - restoring music volume`
+- `[menu] fade-in complete`
 
 ## Source map
 
 | File | Responsibility |
 |---|---|
-| `MusicStartup/Plugin.cs` | BepInEx entry point, config, Harmony bootstrap, host object |
-| `MusicStartup/MusicRecovery.cs` | Watchdog, audio-config/focus recovery |
-| `MusicStartup/MenuMusic.cs` | Automatic main-menu song + smooth fade-in |
-| `MusicStartup/Patches.cs` | Post-start verification patches |
-| `MusicStartup/SelfTest.cs` | Env-gated diagnostics, forced play/audio-reset |
+| `MusicFix/Plugin.cs` | BepInEx entry point, config, Harmony bootstrap, host object |
+| `MusicFix/MusicRecovery.cs` | Watchdog, audio-config/focus recovery, game-over fade recovery, shop restore |
+| `MusicFix/MenuMusic.cs` | Automatic main-menu song + smooth fade-in |
+| `MusicFix/Patches.cs` | Post-start verification patches, `knop.Close_Shop` postfix |
+| `MusicFix/SelfTest.cs` | Env-gated diagnostics and test hooks |
 
 ## Notes / caveats
 
-- The shipped game has **no dedicated main-menu music track**; music starts when
-  a run (or the tutorial) begins. The plugin starts one of the normal run songs
-  in the menu (the same result as toggling Music off/on there) and fades it in.
+- The shipped game has **no dedicated main-menu music track**; the plugin starts
+  one of the normal run songs there (the same result as toggling Music off/on)
+  and fades it in.
 - The automatic menu start happens **once per launch**. Returning to the menu
   after a run keeps the existing behaviour of the base game.
 - The music system is global (`glov.cc.musicControllerRef`), so the fix is
   independent of scene changes.
-- If the player has Music turned **off** in Settings, the plugin does nothing.
-- This mod does not change the save file.
+- The plugin does not change the save file.
 
 ## Credits
 

@@ -1,7 +1,7 @@
 using System.Collections;
 using UnityEngine;
 
-namespace CCFR.MusicStartup
+namespace CCFR.MusicFix
 {
     /// <summary>
     /// Starts one song when the main menu becomes usable and fades it in.
@@ -34,7 +34,7 @@ namespace CCFR.MusicStartup
 
         private static bool ReadyToStart()
         {
-            var game = CCFR.MusicStartup.PluginHolder.Cc;
+            var game = CCFR.MusicFix.PluginHolder.Cc;
             if (game == null || !game.loaded_save)
             {
                 return false;
@@ -79,7 +79,7 @@ namespace CCFR.MusicStartup
 
             bootAttempted = true;
 
-            var game = CCFR.MusicStartup.PluginHolder.Cc;
+            var game = CCFR.MusicFix.PluginHolder.Cc;
             if (game == null)
             {
                 yield break;
@@ -110,12 +110,46 @@ namespace CCFR.MusicStartup
                 yield break;
             }
 
+            StartWithFade(controller, "main-menu");
+        }
+
+        /// <summary>
+        /// Start a song on a controller with no current song and fade it in.
+        /// Also used by the recovery watcher after the game's game-over music fade.
+        /// </summary>
+        internal static bool StartWithFade(MusicController controller, string reason)
+        {
+            if (Instance == null || controller == null || FadeInActive)
+            {
+                return false;
+            }
+
+            if (!controller.gameObject.activeInHierarchy)
+            {
+                return false;
+            }
+
+            if (controller.whichSongDecidedToPlay != -1)
+            {
+                return false;
+            }
+
+            if (controller.musicAudioSource_1 == null)
+            {
+                return false;
+            }
+
             FadeInActive = true;
             FadeController = controller;
-            Plugin.Log.LogInfo("[menu] main menu ready - starting music with fade-in");
+            Plugin.Log.LogInfo($"[menu] starting music with fade-in ({reason})");
 
             controller.Nachat_New_Run(-1, false);
+            Instance.StartCoroutine(Instance.WaitForFadeStart(reason));
+            return true;
+        }
 
+        private IEnumerator WaitForFadeStart(string reason)
+        {
             // Start_MUSIC runs asynchronously after the song clips load. If that
             // never happens, release the fade flag again.
             float deadline = Time.realtimeSinceStartup + 12f;
@@ -128,7 +162,7 @@ namespace CCFR.MusicStartup
             {
                 FadeInActive = false;
                 FadeController = null;
-                Plugin.Log.LogWarning("[menu] music did not start in time; fade-in cancelled");
+                Plugin.Log.LogWarning($"[menu] music did not start in time ({reason}); fade-in cancelled");
             }
         }
 
@@ -188,7 +222,7 @@ namespace CCFR.MusicStartup
 
         private IEnumerator FadeRoutine(MusicController controller, AudioSource source, float targetCurrentMax)
         {
-            var game = CCFR.MusicStartup.PluginHolder.Cc;
+            var game = CCFR.MusicFix.PluginHolder.Cc;
             float additional = game != null ? game.music_additional_volume_change_from_settings : 1f;
             float duration = Mathf.Max(0f, Plugin.MenuFadeInSeconds.Value);
             float finalVolume = targetCurrentMax * additional;

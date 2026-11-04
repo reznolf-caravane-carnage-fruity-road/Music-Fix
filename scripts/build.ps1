@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = Split-Path -Parent $PSScriptRoot
-$project = Join-Path $repo "MusicStartup\MusicStartup.csproj"
+$project = Join-Path $repo "MusicFix\MusicFix.csproj"
 
 $candidates = @(
     "C:\Users\$env:USERNAME\.dotnet\dotnet.exe",
@@ -27,4 +27,4 @@ if ($LASTEXITCODE -ne 0) {
     throw "Build failed with exit code $LASTEXITCODE"
 }
 
-Write-Host "Built: $repo\MusicStartup\bin\Release\CCFR.MusicStartup.dll"
+Write-Host "Built: $repo\MusicFix\bin\Release\CCFR.MusicFix.dll"

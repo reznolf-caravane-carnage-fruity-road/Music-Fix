@@ -1,8 +1,9 @@
 using System;
 using System.Collections;
+using System.Reflection;
 using UnityEngine;
 
-namespace CCFR.MusicStartup
+namespace CCFR.MusicFix
 {
     /// <summary>
     /// Keeps the game's music alive across audio-device reconfigurations and focus changes.
@@ -19,11 +20,19 @@ namespace CCFR.MusicStartup
     internal class MusicRecovery : MonoBehaviour
     {
         private const float WatchdogInterval = 0.5f;
+        private const float GameOverRecoveryCooldown = 8f;
+
+        private static readonly FieldInfo FadedOutAfterGameOversField =
+            typeof(MusicController).GetField("fadedOutMusicCuzSawGameoverManyTimes", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        private static readonly FieldInfo WaitingForNewLevelField =
+            typeof(MusicController).GetField("currentlyWaitingToPlay_NEW_LVL_MUSIC", BindingFlags.Instance | BindingFlags.NonPublic);
 
         internal static MusicRecovery Instance;
 
         private float nextWatchdog;
         private bool audioConfigSubscribed;
+        private float lastGameOverRecovery = -100f;
 
         private void Awake()
         {
@@ -171,7 +180,12 @@ namespace CCFR.MusicStartup
         {
             try
             {
-                var game = CCFR.MusicStartup.PluginHolder.Cc;
+                if (Diag.RecoveryDisabled)
+                {
+                    return;
+                }
+
+                var game = CCFR.MusicFix.PluginHolder.Cc;
                 if (game == null)
                 {
                     return;
@@ -200,9 +214,13 @@ namespace CCFR.MusicStartup
                     return;
                 }
 
-                // No song was ever selected (e.g. main menu with no run yet, or after game over).
                 if (controller.whichSongDecidedToPlay == -1)
                 {
+                    // The game fades music out and clears the song after the player has
+                    // seen the game-over screen several times. Since nothing starts a
+                    // new song until the next run, the menu/shop stays silent forever.
+                    // Start a fresh song with the menu fade once that fade has finished.
+                    TryRecoverAfterGameOverFade(game, controller);
                     return;
                 }
 
@@ -239,6 +257,104 @@ namespace CCFR.MusicStartup
             catch (Exception ex)
             {
                 Plugin.Log.LogWarning($"[recovery] music check failed ({reason}): {ex.Message}");
+            }
+        }
+
+        private static bool ReadPrivateBool(FieldInfo field, object instance)
+        {
+            if (field == null || instance == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                return (bool)field.GetValue(instance);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static void TryRecoverAfterGameOverFade(glov game, MusicController controller)
+        {
+            if (!ReadPrivateBool(FadedOutAfterGameOversField, controller))
+            {
+                return;
+            }
+
+            // A level-unlock transition also clears the song temporarily and starts its
+            // own music a moment later; don't race it.
+            if (ReadPrivateBool(WaitingForNewLevelField, controller))
+            {
+                return;
+            }
+
+            if (controller.fadingOutMusic || controller.currentlySongIsPlaying)
+            {
+                return;
+            }
+
+            if (MenuMusic.FadeInActive || Instance == null)
+            {
+                return;
+            }
+
+            if (Time.realtimeSinceStartup - Instance.lastGameOverRecovery < GameOverRecoveryCooldown)
+            {
+                return;
+            }
+
+            Instance.lastGameOverRecovery = Time.realtimeSinceStartup;
+            Plugin.Log.LogInfo("[recovery] game-over music fade finished; starting a new song with fade-in");
+            MenuMusic.StartWithFade(controller, "game-over-fade");
+        }
+
+        internal static void ScheduleShopRestore()
+        {
+            Instance?.ScheduleShopRestoreInstance();
+        }
+
+        private void ScheduleShopRestoreInstance()
+        {
+            if (!isActiveAndEnabled)
+            {
+                return;
+            }
+
+            StartCoroutine(RestoreShopVolumeAfter(0.5f));
+        }
+
+        private IEnumerator RestoreShopVolumeAfter(float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+
+            try
+            {
+                var game = CCFR.MusicFix.PluginHolder.Cc;
+                if (game == null || game.musicIs_On_1_Off_0 != 1)
+                {
+                    yield break;
+                }
+
+                var controller = game.musicControllerRef;
+                if (controller == null || controller.fadingOutMusic)
+                {
+                    yield break;
+                }
+
+                if (controller.whichSongDecidedToPlay == -1)
+                {
+                    yield break;
+                }
+
+                controller.Set_Music_To_Average_Volume();
+                Plugin.Log.LogInfo("[recovery] shop closed - restoring music volume");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[recovery] shop volume restore failed: {ex.Message}");
             }
         }
     }

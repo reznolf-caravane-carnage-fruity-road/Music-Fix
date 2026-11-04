@@ -2,11 +2,12 @@ using System;
 using System.Collections;
 using UnityEngine;
 
-namespace CCFR.MusicStartup
+namespace CCFR.MusicFix
 {
     internal static class Diag
     {
         internal static bool Enabled;
+        internal static bool RecoveryDisabled;
         internal static bool ForcePlayDone;
 
         internal static string Describe(MusicController mc)
@@ -68,18 +69,26 @@ namespace CCFR.MusicStartup
             float seconds = Diag.EnvFloat("CCFR_MUSICDIAG_SECONDS", 25f);
             float forceAt = Diag.EnvFloat("CCFR_MUSICDIAG_FORCE_PLAY_AT", -1f);
             float resetAt = Diag.EnvFloat("CCFR_MUSICDIAG_RESET_AUDIO_AT", -1f);
+            float fadeOutAt = Diag.EnvFloat("CCFR_MUSICDIAG_FADE_OUT_AT", -1f);
+            float seekEndAt = Diag.EnvFloat("CCFR_MUSICDIAG_SEEK_END_AT", -1f);
+            float shopTestAt = Diag.EnvFloat("CCFR_MUSICDIAG_SHOP_TEST_AT", -1f);
             bool resetDone = false;
+            bool fadeOutDone = false;
+            bool seekEndDone = false;
+            bool shopTestDone = false;
             bool quit = Diag.EnvBool("CCFR_MUSICDIAG_QUIT");
 
-            Plugin.Log.LogInfo($"[diag] started: seconds={seconds} forceAt={forceAt} resetAt={resetAt} quit={quit}");
+            Plugin.Log.LogInfo($"[diag] started: seconds={seconds} forceAt={forceAt} resetAt={resetAt} "
+                + $"fadeOutAt={fadeOutAt} seekEndAt={seekEndAt} shopTestAt={shopTestAt} quit={quit}");
 
             while (Time.realtimeSinceStartup - started < seconds)
             {
                 float elapsed = Time.realtimeSinceStartup - started;
-                var game = CCFR.MusicStartup.PluginHolder.Cc;
-                if (game != null && game.musicControllerRef != null)
+                var game = CCFR.MusicFix.PluginHolder.Cc;
+                var controller = game != null ? game.musicControllerRef : null;
+                if (controller != null)
                 {
-                    Plugin.Log.LogInfo($"[diag t={elapsed:0.0}] {Diag.Describe(game.musicControllerRef)} | {Diag.Global()}");
+                    Plugin.Log.LogInfo($"[diag t={elapsed:0.0}] {Diag.Describe(controller)} | {Diag.Global()}");
                 }
                 else
                 {
@@ -89,7 +98,6 @@ namespace CCFR.MusicStartup
                 if (!Diag.ForcePlayDone && forceAt >= 0f && elapsed >= forceAt)
                 {
                     Diag.ForcePlayDone = true;
-                    var controller = game != null ? game.musicControllerRef : null;
                     if (controller != null)
                     {
                         Plugin.Log.LogInfo($"[diag] forcing Nachat_New_Run at t={elapsed:0.0}");
@@ -104,10 +112,70 @@ namespace CCFR.MusicStartup
                     }
                 }
 
+                if (!fadeOutDone && fadeOutAt >= 0f && elapsed >= fadeOutAt)
+                {
+                    fadeOutDone = true;
+                    if (controller != null)
+                    {
+                        Plugin.Log.LogInfo($"[diag] calling FadeOutMusicSong at t={elapsed:0.0}");
+                        try
+                        {
+                            controller.FadeOutMusicSong();
+
+                            // The real caller (Check_If_Saw_GameoverScreen_Many_Times)
+                            // sets this private flag right after starting the fade.
+                            var flag = typeof(MusicController).GetField(
+                                "fadedOutMusicCuzSawGameoverManyTimes",
+                                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                            flag?.SetValue(controller, true);
+                        }
+                        catch (Exception ex)
+                        {
+                            Plugin.Log.LogError($"[diag] fade-out failed: {ex}");
+                        }
+                    }
+                }
+
+                if (!seekEndDone && seekEndAt >= 0f && elapsed >= seekEndAt)
+                {
+                    seekEndDone = true;
+                    var source = controller != null ? controller.musicAudioSource_1 : null;
+                    if (source != null && source.clip != null && source.clip.name.IndexOf("_loop", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        Plugin.Log.LogInfo($"[diag] seeking near end of '{source.clip.name}' at t={elapsed:0.0}: "
+                            + $"length={source.clip.length:0.000} loop={source.loop} time={source.time:0.000}");
+                        source.time = Mathf.Max(0f, source.clip.length - 0.8f);
+                    }
+                }
+
+                if (!shopTestDone && shopTestAt >= 0f && elapsed >= shopTestAt)
+                {
+                    shopTestDone = true;
+                    if (controller != null && game != null && game.knopRef != null)
+                    {
+                        var source = controller.musicAudioSource_1;
+                        if (source != null)
+                        {
+                            source.volume = 0.03f;
+                        }
+
+                        controller.current_max_volume = 0.05f;
+                        Plugin.Log.LogInfo($"[diag] simulating shop close at t={elapsed:0.0} "
+                            + $"(current_max_volume before={controller.current_max_volume:0.000})");
+                        try
+                        {
+                            game.knopRef.Close_Shop();
+                        }
+                        catch (Exception ex)
+                        {
+                            Plugin.Log.LogError($"[diag] Close_Shop failed: {ex}");
+                        }
+                    }
+                }
+
                 if (!resetDone && resetAt >= 0f && elapsed >= resetAt)
                 {
                     resetDone = true;
-                    var controller = game != null ? game.musicControllerRef : null;
                     if (controller != null)
                     {
                         Plugin.Log.LogInfo($"[diag] resetting audio at t={elapsed:0.0}: {Diag.Describe(controller)}");

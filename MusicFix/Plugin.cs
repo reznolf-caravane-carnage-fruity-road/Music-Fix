@@ -5,14 +5,14 @@ using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
 
-namespace CCFR.MusicStartup
+namespace CCFR.MusicFix
 {
     [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
     public class Plugin : BaseUnityPlugin
     {
-        public const string PluginGuid = "com.reznolf.ccfr.musicstartup";
-        public const string PluginName = "CCFR Music Startup";
-        public const string PluginVersion = "0.2.0";
+        public const string PluginGuid = "com.reznolf.ccfr.musicfix";
+        public const string PluginName = "Music Fix";
+        public const string PluginVersion = "0.3.0";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<bool> StartMusicInMenu;
@@ -40,7 +40,12 @@ namespace CCFR.MusicStartup
             Diag.Enabled = Diag.EnvBool("CCFR_MUSICDIAG")
                 || Environment.GetEnvironmentVariable("CCFR_MUSICDIAG_SECONDS") != null
                 || Environment.GetEnvironmentVariable("CCFR_MUSICDIAG_FORCE_PLAY_AT") != null
-                || Environment.GetEnvironmentVariable("CCFR_MUSICDIAG_RESET_AUDIO_AT") != null;
+                || Environment.GetEnvironmentVariable("CCFR_MUSICDIAG_RESET_AUDIO_AT") != null
+                || Environment.GetEnvironmentVariable("CCFR_MUSICDIAG_FADE_OUT_AT") != null
+                || Environment.GetEnvironmentVariable("CCFR_MUSICDIAG_SEEK_END_AT") != null
+                || Environment.GetEnvironmentVariable("CCFR_MUSICDIAG_SHOP_TEST_AT") != null;
+
+            Diag.RecoveryDisabled = Diag.EnvBool("CCFR_MUSICDIAG_NO_RECOVERY");
 
             // Keep the player ticking while unfocused. The game does this itself in
             // glov.LateStart, but doing it earlier closes the window where Unity can
@@ -49,9 +54,9 @@ namespace CCFR.MusicStartup
 
             var harmony = new Harmony(PluginGuid);
             harmony.PatchAll();
-            Log.LogInfo("Patched: MusicController.Start_MUSIC, MusicController.Nachat_New_Run, MusicIntroChecker.PlayMainMusic");
+            Log.LogInfo("Patched: MusicController.Start_MUSIC, MusicController.Nachat_New_Run, MusicIntroChecker.PlayMainMusic, knop.Close_Shop");
 
-            var host = new GameObject("CCFR_MusicStartup");
+            var host = new GameObject("CCFR_MusicFix");
             DontDestroyOnLoad(host);
             host.AddComponent<MusicRecovery>();
             host.AddComponent<MenuMusic>();

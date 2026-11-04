@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = Split-Path -Parent $PSScriptRoot
-$dll = Join-Path $repo "MusicStartup\bin\Release\CCFR.MusicStartup.dll"
+$dll = Join-Path $repo "MusicFix\bin\Release\CCFR.MusicFix.dll"
 $plugins = Join-Path $GameDir "BepInEx\plugins"
 
 if (-not (Test-Path $dll)) {
@@ -20,4 +20,4 @@ if (-not (Test-Path (Join-Path $GameDir "BepInEx\core\BepInEx.dll"))) {
 New-Item -ItemType Directory -Force -Path $plugins | Out-Null
 Copy-Item $dll $plugins -Force
 
-Write-Host "Deployed to: $plugins\CCFR.MusicStartup.dll"
+Write-Host "Deployed to: $plugins\CCFR.MusicFix.dll"

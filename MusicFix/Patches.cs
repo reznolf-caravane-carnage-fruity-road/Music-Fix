@@ -1,9 +1,22 @@
 using HarmonyLib;
 
-namespace CCFR.MusicStartup
+namespace CCFR.MusicFix
 {
     internal static class Patches
     {
+        /// <summary>
+        /// The main shop lowers music to 5% in EnterShop(), but the normal close path
+        /// never raises it again. Restore the normal target once the shop is closed.
+        /// </summary>
+        [HarmonyPatch(typeof(knop), nameof(knop.Close_Shop))]
+        internal static class CloseShopPatch
+        {
+            private static void Postfix()
+            {
+                MusicRecovery.ScheduleShopRestore();
+            }
+        }
+
         /// <summary>
         /// Music is started here after the song clips finish loading. Verify the
         /// source really began playing; an audio device reconfiguration in the
