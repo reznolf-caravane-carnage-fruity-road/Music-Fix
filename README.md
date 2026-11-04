@@ -12,6 +12,14 @@ A small BepInEx 5 plugin for **Caravan Carnage: Fruity Road** that fixes the
 - Caravan Carnage: Fruity Road (Steam app `3330940`)
 - [BepInEx 5.4.23.6 x64](https://github.com/BepInEx/BepInEx/releases/tag/v5.4.23.6)
 
+## Download
+
+Grab the latest release:
+[Caravan-Carnage-Music-Startup releases](https://github.com/reznolf-caravane-carnage-fruity-road/Caravan-Carnage-Music-Startup/releases/latest)
+
+The zip contains `BepInEx/plugins/CCFR.MusicStartup.dll`; extract it into the
+game folder.
+
 ## Installation
 
 1. Install BepInEx 5 x64 into the game folder and run the game once.
