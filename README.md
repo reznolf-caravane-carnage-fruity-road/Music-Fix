@@ -15,7 +15,7 @@ A small BepInEx 5 plugin for **Caravan Carnage: Fruity Road** that fixes the
 ## Download
 
 Grab the latest release:
-[Caravan-Carnage-Music-Startup releases](https://github.com/reznolf-caravane-carnage-fruity-road/Caravan-Carnage-Music-Startup/releases/latest)
+[Music-Startup-Fix releases](https://github.com/reznolf-caravane-carnage-fruity-road/Music-Startup-Fix/releases/latest)
 
 The zip contains `BepInEx/plugins/CCFR.MusicStartup.dll`; extract it into the
 game folder.
